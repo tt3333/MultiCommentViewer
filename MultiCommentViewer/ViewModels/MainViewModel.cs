@@ -711,6 +711,14 @@ namespace MultiCommentViewer
                 {
                     mcvCvm = new McvYouTubeLiveCommentViewModel(item, messageContext.Metadata, messageContext.Methods, connectionName, _options);
                 }
+                else if (youtubeMessage is YouTubeLiveSitePlugin.IYouTubeLivePaidSticker sticker)
+                {
+                    mcvCvm = new McvYouTubeLiveCommentViewModel(sticker, messageContext.Metadata, messageContext.Methods, connectionName, _options);
+                }
+                else if (youtubeMessage is YouTubeLiveSitePlugin.IYouTubeLiveSponsorshipsGiftPurchaseAnnouncement GiftPurchaseAnnouncement)
+                {
+                    mcvCvm = new McvYouTubeLiveCommentViewModel(GiftPurchaseAnnouncement, messageContext.Metadata, messageContext.Methods, connectionName, _options);
+                }
                 else if (youtubeMessage is YouTubeLiveSitePlugin.IYouTubeLiveMembership member)
                 {
                     mcvCvm = new McvYouTubeLiveCommentViewModel(member, messageContext.Metadata, messageContext.Methods, connectionName, _options);
@@ -752,6 +760,10 @@ namespace MultiCommentViewer
                 if (twitchMessage is TwitchSitePlugin.ITwitchComment comment)
                 {
                     mcvCvm = new TwitchCommentViewModel(comment, messageContext.Metadata, messageContext.Methods, connectionName, _options);
+                }
+                if (twitchMessage is TwitchSitePlugin.ITwitchNotice notice)
+                {
+                    mcvCvm = new TwitchCommentViewModel(notice, messageContext.Metadata, messageContext.Methods, connectionName, _options);
                 }
             }
             else if (messageContext.Message is OpenrecSitePlugin.IOpenrecMessage openrecMessage)

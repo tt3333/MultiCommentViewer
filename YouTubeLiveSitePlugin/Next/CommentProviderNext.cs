@@ -49,44 +49,134 @@ namespace YouTubeLiveSitePlugin.Input
             Vid = vid;
         }
     }
-    class ChannelUrl : IInput
-    {
-        public string Raw { get; }
-        public string ChannelId { get; }
-        public ChannelUrl(string channelUrl)
-        {
-            Raw = channelUrl;
-            ChannelId = VidResolver.ExtractChannelId(channelUrl);
-        }
-    }
-    class UserUrl : IInput
-    {
-        public string Raw { get; }
-        public string UserId { get; }
-        public UserUrl(string userUrl)
-        {
-            Raw = userUrl;
-            UserId = VidResolver.ExtractUserId(userUrl);
-        }
-    }
     class StudioUrl : IInput
     {
         public string Raw { get; }
         public string Vid { get; }
-        public StudioUrl(string studioUrl)
+        public static StudioUrl CreateStudioUrl(string input)
+        {
+            if (VidResolver.TryStudio(input, out var vid))
+            {
+                return new StudioUrl(input, vid);
+            }
+            throw new ArgumentException(nameof(vid));
+        }
+        private StudioUrl(string studioUrl, string vid)
         {
             Raw = studioUrl;
-            Vid = VidResolver.ExtractVidFromStudioUrl(studioUrl);
+            Vid = vid;
         }
     }
-    class CustomChannelUrl : IInput
+    class LiveUrl : IInput
     {
+        private static readonly Regex _regexLiveUrl = new Regex("youtube\\.com/live/(" + VidResolver.VID_PATTERN + ")");
         public string Raw { get; }
-        public string CustomChannelId { get; }
-        public CustomChannelUrl(string customChannelUrl)
+        public string Vid { get; }
+        public static bool TryExtractLiveUrl(string input, out LiveUrl url)
         {
-            Raw = customChannelUrl;
-            CustomChannelId = VidResolver.ExtractCustomChannelId(customChannelUrl);
+            if (string.IsNullOrEmpty(input))
+            {
+                url = null;
+                return false;
+            }
+            var match = _regexLiveUrl.Match(input);
+            if (match.Success)
+            {
+                url = new LiveUrl(input, match.Groups[1].Value);
+                return true;
+            }
+            url = null;
+            return false;
+        }
+        public static bool IsLiveUrl(string input)
+        {
+            if (string.IsNullOrEmpty(input)) return false;
+            return _regexLiveUrl.IsMatch(input);
+        }
+        private LiveUrl(string studioUrl, string vid)
+        {
+            Raw = studioUrl;
+            Vid = vid;
+        }
+    }
+    interface IChannelUrl : IInput { }
+    static class ChannelUrlTools
+    {
+        const string VID_PATTERN = "[^?#:/&]+";
+        const string USERID_PATTERN = VID_PATTERN;
+        const string ChannelIdPattern = VID_PATTERN;
+        public static IChannelUrl CreateChannelUrl(string channelUrl)
+        {
+            if (string.IsNullOrWhiteSpace(channelUrl))
+            {
+                throw new Exception("不正なチャンネルURL");
+            }
+
+            {
+                var match = Regex.Match(channelUrl, "youtube\\.com/channel/(" + ChannelIdPattern + ")");
+                if (match.Success)
+                {
+                    return new NormalChannelUrl(match.Groups[1].Value);
+                }
+            }
+            {
+                var match = Regex.Match(channelUrl, "youtube\\.com/@(" + ChannelIdPattern + ")");
+                if (match.Success)
+                {
+                    return new HandleChannelUrl(match.Groups[1].Value);
+                }
+            }
+            {
+                var match = Regex.Match(channelUrl, "youtube\\.com/c/(" + ChannelIdPattern + ")");
+                if (match.Success)
+                {
+                    return new CustomChannelUrl(match.Groups[1].Value);
+                }
+            }
+            {
+                var match = Regex.Match(channelUrl, "youtube\\.com/user/(" + USERID_PATTERN + ")");
+                if (match.Success)
+                {
+                    return new UserChannelUrl(match.Groups[1].Value);
+                }
+            }
+            throw new Exception("不正なチャンネルURL");
+        }
+    }
+    class NormalChannelUrl : IChannelUrl
+    {
+        public string Raw => $"https://www.youtube.com/channel/{ChannelId}";
+        public string ChannelId { get; }
+        internal NormalChannelUrl(string channelId)
+        {
+            ChannelId = channelId;
+        }
+    }
+    class HandleChannelUrl : IChannelUrl
+    {
+        public string Raw => $"https://www.youtube.com/@{ChannelId}";
+        public string ChannelId { get; }
+        internal HandleChannelUrl(string channelId)
+        {
+            ChannelId = channelId;
+        }
+    }
+    class CustomChannelUrl : IChannelUrl
+    {
+        public string Raw => $"https://www.youtube.com/c/{ChannelId}";
+        public string ChannelId { get; }
+        internal CustomChannelUrl(string channelId)
+        {
+            ChannelId = channelId;
+        }
+    }
+    class UserChannelUrl : IChannelUrl
+    {
+        public string Raw => $"https://www.youtube.com/user/{ChannelId}";
+        public string ChannelId { get; }
+        internal UserChannelUrl(string channelId)
+        {
+            ChannelId = channelId;
         }
     }
     class InvalidInput : IInput
@@ -121,6 +211,11 @@ namespace YouTubeLiveSitePlugin.Next
         /// 配信サイトの仕様変更に未対応
         /// </summary>
         SpecChanged,
+        /// <summary>
+        /// YouTubeサーバーからリロード指示があった
+        /// </summary>
+        Reload,
+        ChatUnavailable,
     }
     //class ChatProviderNext
     //{
@@ -162,6 +257,37 @@ namespace YouTubeLiveSitePlugin.Next
         {
             InfoReceived?.Invoke(this, new InfoData { Comment = message, Type = type });
         }
+        static string ExtractRawWatchYtInitialData(string watchHtml)
+        {
+            var match = Regex.Match(watchHtml, "var\\s*ytInitialData\\s*=\\s*({.+?});");
+            if (!match.Success)
+            {
+                throw new Exception("");
+            }
+            var raw = match.Groups[1].Value;
+            if (string.IsNullOrEmpty(raw))
+            {
+                throw new SpecChangedException(watchHtml);
+            }
+            return raw;
+        }
+        private static async Task<bool> IsLiveAsync(string vid, IYouTubeLiveServer server, CookieContainer cc)
+        {
+            var watchPageUrl = $"https://www.youtube.com/watch?v={vid}";
+            var watchHtml = await server.GetAsync(watchPageUrl, cc);
+            var watchYtInitialDataRaw = ExtractRawWatchYtInitialData(watchHtml);
+            try
+            {
+                dynamic d = JsonConvert.DeserializeObject(watchYtInitialDataRaw);
+                var isLive = d.contents.twoColumnWatchNextResults.results.results.contents[0].videoPrimaryInfoRenderer.viewCount.videoViewCountRenderer.isLive;
+                return isLive ?? false;
+            }
+            catch (Exception)
+            {
+
+            }
+            return false;
+        }
         /// <summary>
         /// 
         /// </summary>
@@ -172,7 +298,7 @@ namespace YouTubeLiveSitePlugin.Next
         /// <returns></returns>
         /// <exception cref="ReloadException"></exception>
         /// <exception cref="SpecChangedException"></exception>
-        public async Task ReceiveAsync(string vid, YtInitialData ytInitialData1, YtCfg ytCfg, CookieContainer cc, ILoginState loginInfo)
+        public async Task ReceiveAsync(string vid, LiveChatYtInitialData ytInitialData1, LiveChatYtCfg ytCfg, CookieContainer cc, ILoginState loginInfo, IYouTubeLiveServer server)
         {
             if (_cts != null)
             {
@@ -181,14 +307,14 @@ namespace YouTubeLiveSitePlugin.Next
             _cts = new CancellationTokenSource();
             try
             {
-                await ReceiveInternalAsync(ytInitialData1, ytCfg, cc, loginInfo);
+                await ReceiveInternalAsync(vid, ytInitialData1, ytCfg, cc, loginInfo, server);
             }
             finally
             {
                 _cts = null;
             }
         }
-        public async Task ReceiveInternalAsync(YtInitialData ytInitialData1, YtCfg ytCfg, CookieContainer cc, ILoginState loginInfo)
+        public async Task ReceiveInternalAsync(string vid, LiveChatYtInitialData ytInitialData1, LiveChatYtCfg ytCfg, CookieContainer cc, ILoginState loginInfo, IYouTubeLiveServer server)
         {
             var dataToPost = new DataToPost(ytCfg);
             string initialContinuation;
@@ -210,7 +336,14 @@ namespace YouTubeLiveSitePlugin.Next
                 var continuation = getLiveChat.Continuation;// s.GetContinuation();
                 if (continuation is null)
                 {
-                    throw new ContinuationNotExistsException();
+                    if (await IsLiveAsync(vid, server, cc))
+                    {
+                        throw new ReloadException();
+                    }
+                    else
+                    {
+                        throw new ContinuationNotExistsException();
+                    }
                 }
                 if (continuation is ReloadContinuationData reload)
                 {
@@ -350,26 +483,23 @@ namespace YouTubeLiveSitePlugin.Next
         {
             var html = await _server.GetAsync($"https://www.youtube.com/watch?v={vid}");
             var liveBroadcastDetails = Test2.Tools.ExtractLiveBroadcastDetailsFromLivePage(html);
-            if (liveBroadcastDetails != null)
+            if (liveBroadcastDetails == null) return;
+            dynamic d = Newtonsoft.Json.JsonConvert.DeserializeObject(liveBroadcastDetails);
+            if (d == null) return;
+            if (!d.ContainsKey("startTimestamp")) return;
+            var startedStr = (string)d.startTimestamp;
+            _startedAt = DateTime.Parse(startedStr);
+            _elapsedTimer.Interval = 500;
+            _elapsedTimer.Elapsed += (s, e) =>
             {
-                dynamic d = Newtonsoft.Json.JsonConvert.DeserializeObject(liveBroadcastDetails);
-                if (d.ContainsKey("startTimestamp"))
+                if (!_startedAt.HasValue) return;
+                var elapsed = DateTime.Now - _startedAt.Value;
+                RaiseMetadataUpdated(new Test2.Metadata
                 {
-                    var startedStr = (string)d.startTimestamp;
-                    _startedAt = DateTime.Parse(startedStr);
-                    _elapsedTimer.Interval = 500;
-                    _elapsedTimer.Elapsed += (s, e) =>
-                    {
-                        if (!_startedAt.HasValue) return;
-                        var elapsed = DateTime.Now - _startedAt.Value;
-                        RaiseMetadataUpdated(new Test2.Metadata
-                        {
-                            Elapsed = Tools.ToElapsedString(elapsed),
-                        });
-                    };
-                    _elapsedTimer.Enabled = true;
-                }
-            }
+                    Elapsed = Tools.ToElapsedString(elapsed),
+                });
+            };
+            _elapsedTimer.Enabled = true;
         }
         private static async Task<string> GetLiveChat(string vid, CookieContainer cc)
         {
@@ -384,14 +514,15 @@ namespace YouTubeLiveSitePlugin.Next
             var res = await client.GetAsync(url);
             return await res.Content.ReadAsStringAsync();
         }
+        ReasonForDisconnection? _reason;
         /// <summary>
         /// 何らかの理由で切断/中断されるまでコメントを取得し続ける
         /// 例外は投げないようにしたい-.
         /// </summary>
         /// <returns>再接続すべきか</returns>
-        private async Task<bool> ConnectOnceAsync(string vid, CookieContainer cc,ChatProvider2 chatProvider, MetaDataYoutubeiProvider metaProvider)
+        private async Task<ReasonForDisconnection> ConnectOnceAsync(string vid, CookieContainer cc, ChatProvider2 chatProvider, MetaDataYoutubeiProvider metaProvider, IYouTubeLiveServer server)
         {
-            var isDisconnectedExpected = false;
+            _reason = null;
 
             var liveChatHtml = await GetLiveChat(vid, cc);
             var liveChat = LiveChat.Parse(liveChatHtml);
@@ -403,7 +534,7 @@ namespace YouTubeLiveSitePlugin.Next
             if (!ytInitialData.CanChat)
             {
                 SendSystemInfo("このライブストリームではチャットは無効です。", InfoType.Notice);
-                return false;
+                return ReasonForDisconnection.ChatUnavailable;
             }
             var loginInfo = Tools.CreateLoginInfo(liveChat.YtCfg.IsLoggedIn);
             //ログイン済みユーザの正常にコメントが取得できるようになったら以下のコードは不要
@@ -419,7 +550,6 @@ namespace YouTubeLiveSitePlugin.Next
                     var keys = string.Join(",", cookies.Select(c => c.Name));
                     _logger.LogException(new Exception(), "", $"cver={cver},keys={keys}");
                     cc = new CookieContainer();
-                    return true;
                 }
             }
             //---ここまで---
@@ -430,13 +560,7 @@ namespace YouTubeLiveSitePlugin.Next
                 OnMessageReceived(action, true);
             }
 
-            //var initialActions = ytInitialData.GetActions();
-            //foreach (var action in initialActions)
-            //{
-            //    OnMessageReceived(action, true);
-            //}
-
-            var chatTask = chatProvider.ReceiveAsync(vid, liveChat.YtInitialData, ytCfg, cc, loginInfo);
+            var chatTask = chatProvider.ReceiveAsync(vid, liveChat.YtInitialData, ytCfg, cc, loginInfo, server);
             var metaTask = metaProvider.ReceiveAsync(ytCfg, vid, cc);
 
             var tasks = new List<Task>
@@ -465,22 +589,22 @@ namespace YouTubeLiveSitePlugin.Next
                     }
                     catch (ContinuationNotExistsException)
                     {
+                        _reason = ReasonForDisconnection.Finished;
                         break;
                     }
                     catch (ChatUnavailableException ex)
                     {
-                        isDisconnectedExpected = true;
                         _logger.LogException(ex);
-                        SendSystemInfo("配信が終了したか、チャットが無効です。", InfoType.Error);
+                        _reason = ReasonForDisconnection.Finished;
                     }
                     catch (ReloadException)
                     {
+                        _reason = ReasonForDisconnection.Reload;
                     }
                     catch (SpecChangedException ex)
                     {
-                        SendSystemInfo("YouTubeの仕様変更に未対応のためコメント取得を継続できません", InfoType.Error);
                         _logger.LogException(ex);
-                        isDisconnectedExpected = true;
+                        _reason = ReasonForDisconnection.SpecChanged;
                     }
                     catch (Exception ex)
                     {
@@ -489,15 +613,11 @@ namespace YouTubeLiveSitePlugin.Next
                         //ただし、サーバーからReloadメッセージが来た場合と違って、単純にリロードすれば済む問題ではない。
                         _logger.LogException(ex);
                         await Task.Delay(1000);
+                        _reason = ReasonForDisconnection.Unknown;
                     }
                     tasks.Remove(chatTask);
 
-                    if (isDisconnectedExpected == false)
-                    {
-                        //何らかの原因で意図しない切断が発生した。
-                        SendSystemInfo("エラーが発生したためサーバーとの接続が切断されましたが、自動的に再接続します", InfoType.Notice);
-                        return true;
-                    }
+                    return _reason == null ? ReasonForDisconnection.Unknown : _reason.Value;
                 }
                 else
                 {
@@ -512,12 +632,27 @@ namespace YouTubeLiveSitePlugin.Next
                     tasks.Remove(metaTask);
                 }
             }
-            return true;
+            //ここに来ることは無いと思う。
+            return _reason == null ? ReasonForDisconnection.Unknown : _reason.Value;
         }
         private async Task ConnectInternalAsync(IInput input, IBrowserProfile browserProfile)
         {
+            _cc = CreateCookieContainer(browserProfile);
+
             var resolver = new VidResolver();
-            var vidResult = await resolver.GetVid(_server, input);
+            IVidResult vidResult;
+            try
+            {
+                vidResult = await resolver.GetVid(_server, input);
+            }
+            catch (SpecChangedException ex)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                return;
+            }
             string vid;
             switch (vidResult)
             {
@@ -537,7 +672,7 @@ namespace YouTubeLiveSitePlugin.Next
                 default:
                     throw new NotImplementedException();
             }
-            _cc = CreateCookieContainer(browserProfile);
+
             await InitElapsedTimer(vid);
             _chatProvider = new ChatProvider2(_siteOptions, _logger);
             _chatProvider.MessageReceived += ChatProvider_MessageReceived;
@@ -548,22 +683,42 @@ namespace YouTubeLiveSitePlugin.Next
             metaProvider.InfoReceived += MetaProvider_InfoReceived;
             metaProvider.MetadataReceived += MetaProvider_MetadataReceived;
 
-        reload:
-            var needReload = true;
+reload:
+            var reason = ReasonForDisconnection.Unknown;
             try
             {
-                needReload = await ConnectOnceAsync(vid,_cc,_chatProvider,metaProvider);
+                reason = await ConnectOnceAsync(vid, _cc, _chatProvider, metaProvider, _server);
             }
-            catch(Exception ex)
+            catch (Test2.ParseException ex)
             {
-                //do something
+                _logger.LogException(ex, "", $"input={input.Raw}");
+                SendSystemInfo("サーバから送られてきたデータの解析に失敗しました", InfoType.Notice);
             }
-            if (!_isDisconnectionButtonPushed)
+            catch (Exception ex)
             {
-                if (needReload)
-                {
-                    goto reload;
-                }
+                _logger.LogException(ex, "", $"input={input.Raw}");
+                SendSystemInfo("未知の例外が発生しました", InfoType.Notice);
+            }
+            if (reason == ReasonForDisconnection.User)
+            {
+                //何もしないでこのまま終了。
+            }
+            else if (reason == ReasonForDisconnection.Finished)
+            {
+                SendSystemInfo("配信が終了しました", InfoType.Notice);
+            }
+            else if (reason == ReasonForDisconnection.SpecChanged)
+            {
+                SendSystemInfo("YouTubeの仕様変更があったため、コメント取得を継続できません", InfoType.Error);
+            }
+            else if (reason == ReasonForDisconnection.ChatUnavailable)
+            {
+                SendSystemInfo("この配信ではチャットが無効になっています", InfoType.Error);
+            }
+            else
+            {
+                SendSystemInfo("エラーが発生したためサーバーとの接続が切断されましたが、自動的に再接続します", InfoType.Error);
+                goto reload;
             }
 
             _chatProvider.MessageReceived -= ChatProvider_MessageReceived;
@@ -629,10 +784,39 @@ namespace YouTubeLiveSitePlugin.Next
                             RaiseMessageReceived(CreateMessageContext2(superChat, isInitialComment));
                         }
                         break;
+                    case PaidSticker paidSticker:
+                        {
+                            if (IsDuplicate(paidSticker.Id))
+                            {
+                                return;
+                            }
+                            RaiseMessageReceived(CreateMessageContext2(paidSticker, isInitialComment));
+                        }
+                        break;
+                    case SponsorshipsGiftPurchaseAnnouncement giftPurchase:
+                        {
+                            if (IsDuplicate(giftPurchase.Id))
+                            {
+                                return;
+                            }
+                            RaiseMessageReceived(CreateMessageContext2(giftPurchase, isInitialComment));
+                        }
+                        break;
+                    case MemberShip memberShip:
+                        {
+                            if (IsDuplicate(memberShip.Id))
+                            {
+                                return;
+                            }
+                            RaiseMessageReceived(CreateMessageContext2(memberShip, isInitialComment));
+                        }
+                        break;
                     case ParseError parseError:
                         {
                             _logger.LogException(new Exception(), "ParseError", parseError.Raw);
                         }
+                        break;
+                    case IgnoredMessage ignoredMessage:
                         break;
                     default:
                         {
@@ -641,7 +825,7 @@ namespace YouTubeLiveSitePlugin.Next
                         break;
                 }
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 _logger.LogException(ex);
             }
@@ -696,6 +880,39 @@ namespace YouTubeLiveSitePlugin.Next
                 }
             }
             metadata.User.Name = nameItems;
+            return new YouTubeLiveMessageContext(message, metadata, methods);
+        }
+        private YouTubeLiveMessageContext CreateMessageContext2(PaidSticker text, bool isInitialComment)
+        {
+            //IYouTubeLiveMessage message;
+
+            var message = new YouTubeLivePaidSticker(text);
+            //message = a;
+
+            var metadata = CreateMetadata(message, isInitialComment);
+            var methods = new YouTubeLiveMessageMethods();
+
+            metadata.User.Name = message.NameItems;
+            return new YouTubeLiveMessageContext(message, metadata, methods);
+        }
+        private YouTubeLiveMessageContext CreateMessageContext2(SponsorshipsGiftPurchaseAnnouncement text, bool isInitialComment)
+        {
+            var message = new YouTubeLiveSponsorshipsGiftPurchaseAnnouncement(text);
+
+            var metadata = CreateMetadata(message, isInitialComment);
+            var methods = new YouTubeLiveMessageMethods();
+
+            metadata.User.Name = message.NameItems;
+            return new YouTubeLiveMessageContext(message, metadata, methods);
+        }
+        private YouTubeLiveMessageContext CreateMessageContext2(MemberShip text, bool isInitialComment)
+        {
+            var message = new YouTubeLiveMembership(text);
+
+            var metadata = CreateMetadata(message, isInitialComment);
+            var methods = new YouTubeLiveMessageMethods();
+
+            metadata.User.Name = message.NameItems;
             return new YouTubeLiveMessageContext(message, metadata, methods);
         }
         //private void OnMessageReceived(IInternalMessage e, bool isInitialComment)
@@ -870,6 +1087,14 @@ namespace YouTubeLiveSitePlugin.Next
             {
                 userId = membership.UserId;
             }
+            else if (message is IYouTubeLivePaidSticker paidSticker)
+            {
+                userId = paidSticker.UserId;
+            }
+            else if (message is IYouTubeLiveSponsorshipsGiftPurchaseAnnouncement purchaseAnnouncement)
+            {
+                userId = purchaseAnnouncement.UserId;
+            }
             bool isFirstComment;
             IUser user;
             if (userId != null)
@@ -929,6 +1154,7 @@ namespace YouTubeLiveSitePlugin.Next
         {
             _chatProvider?.Disconnect();
             _isDisconnectionButtonPushed = true;
+            _reason = ReasonForDisconnection.User;
         }
         protected override void BeforeConnect()
         {

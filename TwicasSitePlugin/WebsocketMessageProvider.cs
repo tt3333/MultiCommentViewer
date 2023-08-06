@@ -48,10 +48,12 @@ namespace TwicasSitePlugin
         public System.Net.CookieContainer Cc { get; set; }
         public string BroadcasterId { get; set; }
         public long LiveId { get; set; }
+        public string WebsocketUrl { get; set; }
+        public Func<Task<string>> GetWsUrl { get; set; }
         private async Task ConnectAsync()
         {
-            var wsUrl = await API.GetWebsocketUrl(_server, LiveId, Cc);
-            await _websocket.ReceiveAsync(wsUrl);
+            var url = await GetWsUrl();
+            await _websocket.ReceiveAsync(url);
         }
         public WebsocketMessageProvider(IWebsocket websocket, IDataServer server)
         {

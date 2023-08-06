@@ -1,14 +1,11 @@
-﻿using System;
-using System.Threading.Tasks;
-using System.Net;
-using System.Text;
-using System.Net.Http;
+﻿using SitePluginCommon;
 using System.Collections.Generic;
-using SitePluginCommon;
-
-namespace TwicasSitePlugin
+using System.Net;
+using System.Net.Http;
+using System.Threading.Tasks;
+namespace ShowRoomSitePlugin
 {
-    class TwicasServer : ServerBase, IDataServer
+    public class ShowRoomServer : ServerBase, IDataServer
     {
         public async Task<string> GetAsync(string url, CookieContainer cc)
         {
@@ -31,9 +28,36 @@ namespace TwicasSitePlugin
             var str = await result.Content.ReadAsStringAsync();
             return str;
         }
-        public Task<string> GetAsync(string url)
+        public async Task<string> GetAsync(string url, Dictionary<string, string> headers, CookieContainer cc)
         {
-            return GetAsync(url, null);
+            var result = await GetInternalAsync(new HttpOptions
+            {
+                Url = url,
+                Cc = cc,
+                Headers = headers,
+            });
+            var str = await result.Content.ReadAsStringAsync();
+            return str;
+        }
+        public async Task<string> GetAsync(string url)
+        {
+            using (var client = new HttpClient())
+            {
+                var result = await client.GetStringAsync(url);
+                return result;
+            }
+        }
+        public async Task<string> PostJsonAsync(string url, Dictionary<string, string> headers, string json, CookieContainer cc)
+        {
+            var content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+            var result = await PostInternalAsync(new HttpOptions
+            {
+                Url = url,
+                Cc = cc,
+                Headers = headers,
+            }, content);
+            var str = await result.Content.ReadAsStringAsync();
+            return str;
         }
         public async Task<string> PostAsync(string url, Dictionary<string, string> data, CookieContainer cc)
         {
@@ -46,20 +70,6 @@ namespace TwicasSitePlugin
             var str = await result.Content.ReadAsStringAsync();
             return str;
         }
-        public async Task<string> PostMultipartFormdataAsync(string url, Dictionary<string, string> data, CookieContainer cc)
-        {
-            var content = new MultipartFormDataContent();
-            foreach (var kv in data)
-            {
-                content.Add(new StringContent(kv.Value), kv.Key);
-            }
-            var result = await PostInternalAsync(new HttpOptions
-            {
-                Url = url,
-                Cc = cc,
-            }, content);
-            var str = await result.Content.ReadAsStringAsync();
-            return str;
-        }
     }
 }
+

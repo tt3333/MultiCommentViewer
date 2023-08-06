@@ -138,21 +138,76 @@ namespace MultiCommentViewer
             Id = comment.Id;
             PostTime = comment.PostedAt.ToString("HH:mm:ss");
         }
+        public McvYouTubeLiveCommentViewModel(YouTubeLiveSitePlugin.IYouTubeLivePaidSticker sticker, IMessageMetadata metadata, IMessageMethods methods, IConnectionStatus connectionStatus, IOptions options)
+    : this(metadata, methods, connectionStatus, options)
+        {
+            _message = sticker;
+
+            _nameItems = sticker.NameItems;
+
+            var list = new List<IMessagePart>();
+            list.Add(MessagePartFactory.CreateMessageText(sticker.PurchaseAmount + Environment.NewLine));
+            list.Add(new Common.MessageImage
+            {
+                Url = sticker.StickerUrl,
+                Alt = sticker.StickerTooltip,
+                Width = sticker.StickerWidth,
+                Height = sticker.StickerHeight,
+            });
+            MessageItems = list;
+
+            Thumbnail = sticker.UserIcon;
+            Id = sticker.Id;
+            PostTime = sticker.PostedAt.ToString("HH:mm:ss");
+        }
+        public McvYouTubeLiveCommentViewModel(YouTubeLiveSitePlugin.IYouTubeLiveSponsorshipsGiftPurchaseAnnouncement sticker, IMessageMetadata metadata, IMessageMethods methods, IConnectionStatus connectionStatus, IOptions options)
+    : this(metadata, methods, connectionStatus, options)
+        {
+            _message = sticker;
+
+            _nameItems = sticker.NameItems;
+
+            var list = new List<IMessagePart>();
+            list.AddRange(sticker.MessageItems);
+            MessageItems = list;
+
+            Thumbnail = sticker.UserIcon;
+            Id = sticker.Id;
+            PostTime = sticker.PostedAt.ToString("HH:mm:ss");
+        }
         public McvYouTubeLiveCommentViewModel(YouTubeLiveSitePlugin.IYouTubeLiveMembership comment, IMessageMetadata metadata, IMessageMethods methods, IConnectionStatus connectionStatus, IOptions options)
             : this(metadata, methods, connectionStatus, options)
         {
             _message = comment;
 
             _nameItems = comment.NameItems;
-            var messageItems = new List<IMessagePart>();
-            messageItems.AddRange(comment.HeaderPrimaryTextItems);
-            messageItems.AddRange(comment.HeaderSubTextItems);
-            messageItems.AddRange(comment.CommentItems);
-            MessageItems = messageItems;
-            Thumbnail = comment.UserIcon;
-            Id = comment.Id.ToString();
-            PostTime = comment.PostedAt.ToString("HH:mm:ss");
-            Info = "メンバー登録";
+
+            if (comment.HeaderPrimaryTextItems == null || comment.CommentItems.Count() == 0)
+            {
+                //メンバーシップ登録
+                var messageItems = new List<IMessagePart>();
+                messageItems.AddRange(comment.HeaderSubTextItems);
+                MessageItems = messageItems;
+                Thumbnail = comment.UserIcon;
+                Id = comment.Id.ToString();
+                PostTime = comment.PostedAt.ToString("HH:mm:ss");
+                Info = "メンバーシップ登録";
+            }
+            else
+            {
+                //メンバーシップメッセージ
+                var messageItems = new List<IMessagePart>();
+                messageItems.AddRange(comment.HeaderPrimaryTextItems);
+                messageItems.Add(MessagePartFactory.CreateMessageText(Environment.NewLine));
+                messageItems.AddRange(comment.HeaderSubTextItems);
+                messageItems.Add(MessagePartFactory.CreateMessageText(Environment.NewLine));
+                messageItems.AddRange(comment.CommentItems);
+                MessageItems = messageItems;
+                Thumbnail = comment.UserIcon;
+                Id = comment.Id.ToString();
+                PostTime = comment.PostedAt.ToString("HH:mm:ss");
+                Info = "メンバーシップメッセージ";
+            }
         }
         public McvYouTubeLiveCommentViewModel(YouTubeLiveSitePlugin.IYouTubeLiveConnected connected, IMessageMetadata metadata, IMessageMethods methods, IConnectionStatus connectionStatus, IOptions options)
             : this(metadata, methods, connectionStatus, options)

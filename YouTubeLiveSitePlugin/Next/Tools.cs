@@ -15,6 +15,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
+using YouTubeLiveSitePlugin.Input;
 using YouTubeLiveSitePlugin.Test2;
 
 namespace YouTubeLiveSitePlugin.Next
@@ -157,7 +158,7 @@ namespace YouTubeLiveSitePlugin.Next
         {
             _d.continuation = continuation;
         }
-        public DataToPost(YtCfg ytCfg)
+        public DataToPost(LiveChatYtCfg ytCfg)
         {
             dynamic d = JsonConvert.DeserializeObject("{\"context\":{}}", new JsonSerializerSettings { Formatting = Formatting.None });
             dynamic context = JsonConvert.DeserializeObject(ytCfg.InnertubeContext, new JsonSerializerSettings { Formatting = Formatting.None });
@@ -572,7 +573,7 @@ namespace YouTubeLiveSitePlugin.Next
     //            messageItems.AddRange(message);
     //            ahh.MessageItems = messageItems;
     //        }
-         
+
     //        //name
     //        ahh.NameItems = (List<IMessagePart>)GetNameParts(ren);
     //        return ahh;
@@ -684,21 +685,21 @@ namespace YouTubeLiveSitePlugin.Next
         public static Input.IInput ParseInput(string input)
         {
             if (string.IsNullOrEmpty(input)) throw new ArgumentNullException(nameof(input));
-            if (VidResolver.IsChannel(input))
+            if (VidResolver.IsNormalChannel(input))
             {
-                return new Input.ChannelUrl(input);
+                return Input.ChannelUrlTools.CreateChannelUrl(input);
             }
             else if (VidResolver.IsCustomChannel(input))
             {
-                return new Input.CustomChannelUrl(input);
+                return Input.ChannelUrlTools.CreateChannelUrl(input);
             }
-            else if (VidResolver.IsStudio(input))
+            else if (VidResolver.IsHandleChannel(input))
             {
-                return new Input.StudioUrl(input);
+                return Input.ChannelUrlTools.CreateChannelUrl(input);
             }
             else if (VidResolver.IsUser(input))
             {
-                return new Input.UserUrl(input);
+                return Input.ChannelUrlTools.CreateChannelUrl(input);
             }
             else if (VidResolver.IsVid(input))
             {
@@ -707,6 +708,14 @@ namespace YouTubeLiveSitePlugin.Next
             else if (VidResolver.IsWatch(input))
             {
                 return new Input.WatchUrl(input);
+            }
+            else if (VidResolver.IsStudio(input))
+            {
+                return Input.StudioUrl.CreateStudioUrl(input);
+            }
+            else if (LiveUrl.TryExtractLiveUrl(input, out var liveUrl))
+            {
+                return liveUrl;
             }
             return new Input.InvalidInput(input);
         }

@@ -36,6 +36,10 @@ namespace YouTubeLiveSitePlugin.Test2
         protected Metadata ActionsToMetadata(dynamic actions)
         {
             var metadata = new Metadata();
+            if (actions == null)
+            {
+                return metadata;
+            }
             string like = null;
             string dislike = null;
             foreach (var action in actions)
@@ -138,7 +142,7 @@ namespace YouTubeLiveSitePlugin.Test2
             metadata.Others = others;
             return metadata;
         }
-        public abstract Task ReceiveAsync(YtCfg ytCfg, string vid, CookieContainer cc);
+        public abstract Task ReceiveAsync(LiveChatYtCfg ytCfg, string vid, CookieContainer cc);
         public IMetadataProvider(ILogger logger)
         {
             _logger = logger;
